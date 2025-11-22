@@ -1,5 +1,5 @@
 import express, { Request, Response } from "express";
-import cors from "cors"; // ⭐ AGREGAR ESTA LÍNEA
+import cors from "cors";
 import axios from "axios";
 import * as dotenv from "dotenv";
 import { PrismaClient } from "@prisma/client";
@@ -10,12 +10,12 @@ dotenv.config();
 const prisma = new PrismaClient();
 const app = express();
 
-// ⭐ AGREGAR CORS AQUÍ - ANTES DE express.json()
+// CORS
 app.use(
   cors({
     origin: [
       process.env.CORS_ORIGIN || "http://localhost:5173",
-      /\.vercel\.app$/, // Permite todos los subdominios de vercel
+      /\.vercel\.app$/,
       "http://localhost:3000",
       "http://localhost:5173",
     ],
@@ -26,9 +26,9 @@ app.use(
 
 app.use(express.json());
 
-const PORT = parseInt(process.env.PORT || "10000", 10); // ⭐ CAMBIAR A 10000 PARA RENDER
+const PORT = parseInt(process.env.PORT || "10000", 10);
 const PROMETHEUS_URL = process.env.PROMETHEUS_URL || "http://prometheus:9090";
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
 
 // ========================================
 // MÉTRICAS DE PROMETHEUS
@@ -147,15 +147,15 @@ async function getSystemMetrics() {
 }
 
 // ========================================
-// FUNCIÓN: ANALIZAR CON GEMINI AI
+// FUNCIÓN: ANALIZAR CON GROQ AI
 // ========================================
-async function analyzeWithGemini(businessMetrics: any, systemMetrics: any) {
-  if (!GEMINI_API_KEY) {
+async function analyzeWithGroq(businessMetrics: any, systemMetrics: any) {
+  if (!GROQ_API_KEY) {
     return {
       anomaly: "No",
       type: "N/A",
-      justification: "API Key de Gemini no configurada",
-      recommendation: "Configurar GEMINI_API_KEY en .env",
+      justification: "API Key de Groq no configurada",
+      recommendation: "Configurar GROQ_API_KEY en .env",
       priority: "N/A",
     };
   }
@@ -203,18 +203,28 @@ Detecta posibles anomalías o problemas operacionales y responde EXACTAMENTE en 
 
   try {
     const response = await axios.post(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent",
+      "https://api.groq.com/openai/v1/chat/completions",
       {
-        contents: [{ parts: [{ text: prompt }] }],
+        model: "llama-3.3-70b-versatile",
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        temperature: 0.7,
+        max_tokens: 500,
       },
       {
-        params: { key: GEMINI_API_KEY },
+        headers: {
+          Authorization: `Bearer ${GROQ_API_KEY}`,
+          "Content-Type": "application/json",
+        },
         timeout: 10000,
       }
     );
 
-    const analysis =
-      response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const analysis = response.data?.choices?.[0]?.message?.content || "";
 
     // Extraer información del análisis
     const extractField = (field: string): string => {
@@ -232,11 +242,11 @@ Detecta posibles anomalías o problemas operacionales y responde EXACTAMENTE en 
       fullAnalysis: analysis,
     };
   } catch (error) {
-    console.error("Error en análisis con Gemini:", error);
+    console.error("Error en análisis con Groq:", error);
     return {
       anomaly: "Error",
       type: "Sistema",
-      justification: "Error al comunicarse con Gemini AI",
+      justification: "Error al comunicarse con Groq AI",
       recommendation: "Verificar API Key y conexión",
       priority: "Media",
     };
@@ -255,7 +265,7 @@ app.get("/aiops/check-business", async (req: Request, res: Response) => {
     const systemMetrics = await getSystemMetrics();
 
     // 2. Analizar con IA
-    const aiAnalysis = await analyzeWithGemini(businessMetrics, systemMetrics);
+    const aiAnalysis = await analyzeWithGroq(businessMetrics, systemMetrics);
 
     // 3. Actualizar métricas de Prometheus
     const anomalyLevel = aiAnalysis.anomaly.toLowerCase().includes("sí")
@@ -331,7 +341,7 @@ app.get("/health", async (req: Request, res: Response) => {
       services: {
         database: "connected",
         prometheus: PROMETHEUS_URL,
-        gemini: GEMINI_API_KEY ? "configured" : "not configured",
+        groq: GROQ_API_KEY ? "configured" : "not configured",
       },
       uptime: process.uptime(),
     });
@@ -348,7 +358,6 @@ app.get("/health", async (req: Request, res: Response) => {
 // INICIAR SERVIDOR
 // ========================================
 app.listen(PORT, "0.0.0.0", () => {
-  // ⭐ AGREGAR '0.0.0.0' PARA RENDER
   console.log("=".repeat(60));
   console.log("🤖 MCP-AIOps para Taller Mecánico");
   console.log("=".repeat(60));
@@ -358,8 +367,8 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`🔍 Análisis: http://localhost:${PORT}/aiops/check-business`);
   console.log("=".repeat(60));
 
-  if (!GEMINI_API_KEY) {
-    console.warn("⚠️  ADVERTENCIA: GEMINI_API_KEY no configurada");
+  if (!GROQ_API_KEY) {
+    console.warn("⚠️  ADVERTENCIA: GROQ_API_KEY no configurada");
     console.warn("   El análisis con IA estará deshabilitado");
   }
 });
