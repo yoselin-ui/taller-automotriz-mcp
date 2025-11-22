@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// Tabla de Usuarios para autenticación JWT
+model users {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email      String    @unique @db.VarChar(255)
+  password   String    @db.VarChar(255)
+  nombre     String    @db.VarChar(100)
+  rol        String    @default("empleado") @db.VarChar(50) // admin, mecanico, recepcionista
+  activo     Boolean   @default(true)
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at DateTime? @updatedAt @db.Timestamptz(6)
+}
+
+
+
+// Tabla de Clientes
+model clientes {
+  id_cliente Int         @id @default(autoincrement())
+  nombre     String      @db.VarChar(100)
+  direccion  String?     @db.VarChar(255)
+  telefono   String      @db.VarChar(20)
+  correo     String?     @db.VarChar(100)
+  created_at DateTime?   @default(now()) @db.Timestamptz(6)
+  vehiculos  vehiculos[]
+}
+
+// Tabla de Vehículos
+model vehiculos {
+  id_vehiculo     Int               @id @default(autoincrement())
+  id_cliente      Int
+  marca           String            @db.VarChar(50)
+  modelo          String            @db.VarChar(50)
+  anio            Int
+  placas          String            @unique @db.VarChar(20)
+  color           String?           @db.VarChar(30)
+  vin             String?           @unique @db.VarChar(17)
+  created_at      DateTime?         @default(now()) @db.Timestamptz(6)
+  cliente         clientes          @relation(fields: [id_cliente], references: [id_cliente], onDelete: Cascade)
+  ordenes_servicio ordenes_servicio[]
+}
+
+// Catálogo de Servicios
+model servicios {
+  id_servicio  Int             @id @default(autoincrement())
+  nombre       String          @db.VarChar(100)
+  descripcion  String?         @db.VarChar(255)
+  precio       Decimal         @db.Decimal(10, 2)
+  tiempo_est   Int?            // Tiempo estimado en minutos
+  activo       Boolean         @default(true)
+  created_at   DateTime?       @default(now()) @db.Timestamptz(6)
+  detalle_orden detalle_orden[]
+}
+
+// Tabla de Empleados/Mecánicos
+model empleados {
+  id_empleado      Int                @id @default(autoincrement())
+  nombre           String             @db.VarChar(100)
+  especialidad     String?            @db.VarChar(100)
+  telefono         String?            @db.VarChar(20)
+  salario          Decimal?           @db.Decimal(10, 2)
+  activo           Boolean            @default(true)
+  created_at       DateTime?          @default(now()) @db.Timestamptz(6)
+  ordenes_servicio ordenes_servicio[]
+}
+
+// Órdenes de Servicio
+model ordenes_servicio {
+  id_orden       Int             @id @default(autoincrement())
+  id_vehiculo    Int
+  id_empleado    Int?
+  fecha_entrada  DateTime        @default(now()) @db.Timestamptz(6)
+  fecha_salida   DateTime?       @db.Timestamptz(6)
+  observaciones  String?         @db.Text
+  estado         String          @default("pendiente") @db.VarChar(50) // pendiente, en_proceso, completado, entregado
+  kilometraje    Int?
+  created_at     DateTime?       @default(now()) @db.Timestamptz(6)
+  vehiculo       vehiculos       @relation(fields: [id_vehiculo], references: [id_vehiculo])
+  empleado       empleados?      @relation(fields: [id_empleado], references: [id_empleado])
+  detalle_orden  detalle_orden[]
+  facturas       facturas[]
+}
+
+// Detalle de servicios por orden
+model detalle_orden {
+  id_detalle  Int              @id @default(autoincrement())
+  id_orden    Int
+  id_servicio Int
+  cantidad    Int              @default(1)
+  precio_unit Decimal          @db.Decimal(10, 2)
+  subtotal    Decimal          @db.Decimal(10, 2)
+  created_at  DateTime?        @default(now()) @db.Timestamptz(6)
+  orden       ordenes_servicio @relation(fields: [id_orden], references: [id_orden], onDelete: Cascade)
+  servicio    servicios        @relation(fields: [id_servicio], references: [id_servicio])
+}
+
+// Facturas
+model facturas {
+  id_factura  Int              @id @default(autoincrement())
+  id_orden    Int              @unique
+  fecha       DateTime         @default(now()) @db.Timestamptz(6)
+  subtotal    Decimal          @db.Decimal(10, 2)
+  iva         Decimal          @db.Decimal(10, 2)
+  total       Decimal          @db.Decimal(10, 2)
+  metodo_pago String?          @db.VarChar(50) // efectivo, tarjeta, transferencia
+  created_at  DateTime?        @default(now()) @db.Timestamptz(6)
+  orden       ordenes_servicio @relation(fields: [id_orden], references: [id_orden])
+}
