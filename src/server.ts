@@ -1,36 +1,52 @@
-import express, { Request, Response } from 'express';
-import axios from 'axios';
-import * as dotenv from 'dotenv';
-import { PrismaClient } from '@prisma/client';
-import * as promClient from 'prom-client';
+import express, { Request, Response } from "express";
+import cors from "cors"; // ⭐ AGREGAR ESTA LÍNEA
+import axios from "axios";
+import * as dotenv from "dotenv";
+import { PrismaClient } from "@prisma/client";
+import * as promClient from "prom-client";
 
 dotenv.config();
 
 const prisma = new PrismaClient();
 const app = express();
+
+// ⭐ AGREGAR CORS AQUÍ - ANTES DE express.json()
+app.use(
+  cors({
+    origin: [
+      process.env.CORS_ORIGIN || "http://localhost:5173",
+      /\.vercel\.app$/, // Permite todos los subdominios de vercel
+      "http://localhost:3000",
+      "http://localhost:5173",
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  })
+);
+
 app.use(express.json());
 
-const PORT = parseInt(process.env.PORT || '8080', 10);
-const PROMETHEUS_URL = process.env.PROMETHEUS_URL || 'http://prometheus:9090';
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const PORT = parseInt(process.env.PORT || "10000", 10); // ⭐ CAMBIAR A 10000 PARA RENDER
+const PROMETHEUS_URL = process.env.PROMETHEUS_URL || "http://prometheus:9090";
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 
 // ========================================
 // MÉTRICAS DE PROMETHEUS
 // ========================================
 const register = new promClient.Registry();
-promClient.collectDefaultMetrics({ register, prefix: 'mcp_taller_' });
+promClient.collectDefaultMetrics({ register, prefix: "mcp_taller_" });
 
 const anomalyGauge = new promClient.Gauge({
-  name: 'mcp_taller_business_anomaly',
-  help: 'Indica anomalías detectadas: 0=Normal, 1=Potencial, 2=Crítica',
-  labelNames: ['type']
+  name: "mcp_taller_business_anomaly",
+  help: "Indica anomalías detectadas: 0=Normal, 1=Potencial, 2=Crítica",
+  labelNames: ["type"],
 });
 register.registerMetric(anomalyGauge);
 
 const analysisCounter = new promClient.Counter({
-  name: 'mcp_taller_analysis_total',
-  help: 'Total de análisis realizados',
-  labelNames: ['status']
+  name: "mcp_taller_analysis_total",
+  help: "Total de análisis realizados",
+  labelNames: ["status"],
 });
 register.registerMetric(analysisCounter);
 
@@ -47,21 +63,21 @@ async function getBusinessMetrics() {
       totalVehicles,
       todayRevenue,
       activeEmployees,
-      activeServices
+      activeServices,
     ] = await Promise.all([
-      prisma.ordenes_servicio.count({ where: { estado: 'pendiente' } }),
-      prisma.ordenes_servicio.count({ where: { estado: 'en_proceso' } }),
-      prisma.ordenes_servicio.count({ where: { estado: 'completado' } }),
+      prisma.ordenes_servicio.count({ where: { estado: "pendiente" } }),
+      prisma.ordenes_servicio.count({ where: { estado: "en_proceso" } }),
+      prisma.ordenes_servicio.count({ where: { estado: "completado" } }),
       prisma.clientes.count(),
       prisma.vehiculos.count(),
       prisma.facturas.aggregate({
         where: {
-          fecha: { gte: new Date(new Date().setHours(0, 0, 0, 0)) }
+          fecha: { gte: new Date(new Date().setHours(0, 0, 0, 0)) },
         },
-        _sum: { total: true }
+        _sum: { total: true },
       }),
       prisma.empleados.count({ where: { activo: true } }),
-      prisma.servicios.count({ where: { activo: true } })
+      prisma.servicios.count({ where: { activo: true } }),
     ]);
 
     return {
@@ -73,10 +89,10 @@ async function getBusinessMetrics() {
       ingresos_hoy: Number(todayRevenue._sum.total || 0),
       empleados_activos: activeEmployees,
       servicios_activos: activeServices,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
   } catch (error) {
-    console.error('Error obteniendo métricas del negocio:', error);
+    console.error("Error obteniendo métricas del negocio:", error);
     throw error;
   }
 }
@@ -88,14 +104,27 @@ async function getSystemMetrics() {
   try {
     const queries = {
       cpu: '(1 - avg(irate(node_cpu_seconds_total{mode="idle"}[5m]))) * 100',
-      memory: 'node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100',
-      disk: '100 - ((node_filesystem_avail_bytes{mountpoint="/"} * 100) / node_filesystem_size_bytes{mountpoint="/"})'
+      memory:
+        "node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes * 100",
+      disk: '100 - ((node_filesystem_avail_bytes{mountpoint="/"} * 100) / node_filesystem_size_bytes{mountpoint="/"})',
     };
 
     const [cpuRes, memRes, diskRes] = await Promise.all([
-      axios.get(`${PROMETHEUS_URL}/api/v1/query`, { params: { query: queries.cpu } }).catch(() => null),
-      axios.get(`${PROMETHEUS_URL}/api/v1/query`, { params: { query: queries.memory } }).catch(() => null),
-      axios.get(`${PROMETHEUS_URL}/api/v1/query`, { params: { query: queries.disk } }).catch(() => null)
+      axios
+        .get(`${PROMETHEUS_URL}/api/v1/query`, {
+          params: { query: queries.cpu },
+        })
+        .catch(() => null),
+      axios
+        .get(`${PROMETHEUS_URL}/api/v1/query`, {
+          params: { query: queries.memory },
+        })
+        .catch(() => null),
+      axios
+        .get(`${PROMETHEUS_URL}/api/v1/query`, {
+          params: { query: queries.disk },
+        })
+        .catch(() => null),
     ]);
 
     const extractValue = (res: any) => {
@@ -109,10 +138,10 @@ async function getSystemMetrics() {
     return {
       cpu_usage: extractValue(cpuRes),
       memory_available: extractValue(memRes),
-      disk_usage: extractValue(diskRes)
+      disk_usage: extractValue(diskRes),
     };
   } catch (error) {
-    console.error('Error obteniendo métricas del sistema:', error);
+    console.error("Error obteniendo métricas del sistema:", error);
     return { cpu_usage: null, memory_available: null, disk_usage: null };
   }
 }
@@ -123,11 +152,11 @@ async function getSystemMetrics() {
 async function analyzeWithGemini(businessMetrics: any, systemMetrics: any) {
   if (!GEMINI_API_KEY) {
     return {
-      anomaly: 'No',
-      type: 'N/A',
-      justification: 'API Key de Gemini no configurada',
-      recommendation: 'Configurar GEMINI_API_KEY en .env',
-      priority: 'N/A'
+      anomaly: "No",
+      type: "N/A",
+      justification: "API Key de Gemini no configurada",
+      recommendation: "Configurar GEMINI_API_KEY en .env",
+      priority: "N/A",
     };
   }
 
@@ -147,9 +176,21 @@ Analiza las siguientes métricas del negocio y del sistema:
 - Servicios activos: ${businessMetrics.servicios_activos}
 
 **MÉTRICAS DEL SISTEMA:**
-- Uso de CPU: ${systemMetrics.cpu_usage ? parseFloat(systemMetrics.cpu_usage).toFixed(2) + '%' : 'N/A'}
-- Memoria disponible: ${systemMetrics.memory_available ? parseFloat(systemMetrics.memory_available).toFixed(2) + '%' : 'N/A'}
-- Uso de disco: ${systemMetrics.disk_usage ? parseFloat(systemMetrics.disk_usage).toFixed(2) + '%' : 'N/A'}
+- Uso de CPU: ${
+    systemMetrics.cpu_usage
+      ? parseFloat(systemMetrics.cpu_usage).toFixed(2) + "%"
+      : "N/A"
+  }
+- Memoria disponible: ${
+    systemMetrics.memory_available
+      ? parseFloat(systemMetrics.memory_available).toFixed(2) + "%"
+      : "N/A"
+  }
+- Uso de disco: ${
+    systemMetrics.disk_usage
+      ? parseFloat(systemMetrics.disk_usage).toFixed(2) + "%"
+      : "N/A"
+  }
 
 Detecta posibles anomalías o problemas operacionales y responde EXACTAMENTE en este formato:
 
@@ -162,41 +203,42 @@ Detecta posibles anomalías o problemas operacionales y responde EXACTAMENTE en 
 
   try {
     const response = await axios.post(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent',
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent",
       {
-        contents: [{ parts: [{ text: prompt }] }]
+        contents: [{ parts: [{ text: prompt }] }],
       },
       {
         params: { key: GEMINI_API_KEY },
-        timeout: 10000
+        timeout: 10000,
       }
     );
 
-    const analysis = response.data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const analysis =
+      response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
     // Extraer información del análisis
     const extractField = (field: string): string => {
-      const regex = new RegExp(`\\*\\*${field}:\\*\\*\\s*(.+?)(?=\\n|$)`, 'i');
+      const regex = new RegExp(`\\*\\*${field}:\\*\\*\\s*(.+?)(?=\\n|$)`, "i");
       const match = analysis.match(regex);
-      return match ? match[1].trim() : 'N/A';
+      return match ? match[1].trim() : "N/A";
     };
 
     return {
-      anomaly: extractField('Anomalía Detectada'),
-      type: extractField('Tipo'),
-      justification: extractField('Justificación'),
-      recommendation: extractField('Recomendación'),
-      priority: extractField('Prioridad'),
-      fullAnalysis: analysis
+      anomaly: extractField("Anomalía Detectada"),
+      type: extractField("Tipo"),
+      justification: extractField("Justificación"),
+      recommendation: extractField("Recomendación"),
+      priority: extractField("Prioridad"),
+      fullAnalysis: analysis,
     };
   } catch (error) {
-    console.error('Error en análisis con Gemini:', error);
+    console.error("Error en análisis con Gemini:", error);
     return {
-      anomaly: 'Error',
-      type: 'Sistema',
-      justification: 'Error al comunicarse con Gemini AI',
-      recommendation: 'Verificar API Key y conexión',
-      priority: 'Media'
+      anomaly: "Error",
+      type: "Sistema",
+      justification: "Error al comunicarse con Gemini AI",
+      recommendation: "Verificar API Key y conexión",
+      priority: "Media",
     };
   }
 }
@@ -204,10 +246,10 @@ Detecta posibles anomalías o problemas operacionales y responde EXACTAMENTE en 
 // ========================================
 // ENDPOINT: ANÁLISIS COMPLETO
 // ========================================
-app.get('/aiops/check-business', async (req: Request, res: Response) => {
+app.get("/aiops/check-business", async (req: Request, res: Response) => {
   try {
-    console.log('🔍 Iniciando análisis AIOps...');
-    
+    console.log("🔍 Iniciando análisis AIOps...");
+
     // 1. Obtener métricas
     const businessMetrics = await getBusinessMetrics();
     const systemMetrics = await getSystemMetrics();
@@ -216,42 +258,55 @@ app.get('/aiops/check-business', async (req: Request, res: Response) => {
     const aiAnalysis = await analyzeWithGemini(businessMetrics, systemMetrics);
 
     // 3. Actualizar métricas de Prometheus
-    const anomalyLevel = 
-      aiAnalysis.anomaly.toLowerCase().includes('sí') ? 2 :
-      aiAnalysis.anomaly.toLowerCase().includes('potencial') ? 1 : 0;
-    
+    const anomalyLevel = aiAnalysis.anomaly.toLowerCase().includes("sí")
+      ? 2
+      : aiAnalysis.anomaly.toLowerCase().includes("potencial")
+      ? 1
+      : 0;
+
     anomalyGauge.set({ type: aiAnalysis.type }, anomalyLevel);
-    analysisCounter.inc({ status: 'success' });
+    analysisCounter.inc({ status: "success" });
 
     // 4. Responder
     res.json({
       timestamp: new Date().toISOString(),
-      status: 'success',
+      status: "success",
       businessMetrics,
       systemMetrics: {
-        cpu_usage: systemMetrics.cpu_usage ? `${parseFloat(systemMetrics.cpu_usage).toFixed(2)}%` : 'N/A',
-        memory_available: systemMetrics.memory_available ? `${parseFloat(systemMetrics.memory_available).toFixed(2)}%` : 'N/A',
-        disk_usage: systemMetrics.disk_usage ? `${parseFloat(systemMetrics.disk_usage).toFixed(2)}%` : 'N/A'
+        cpu_usage: systemMetrics.cpu_usage
+          ? `${parseFloat(systemMetrics.cpu_usage).toFixed(2)}%`
+          : "N/A",
+        memory_available: systemMetrics.memory_available
+          ? `${parseFloat(systemMetrics.memory_available).toFixed(2)}%`
+          : "N/A",
+        disk_usage: systemMetrics.disk_usage
+          ? `${parseFloat(systemMetrics.disk_usage).toFixed(2)}%`
+          : "N/A",
       },
       aiAnalysis: {
         anomalyDetected: aiAnalysis.anomaly,
         type: aiAnalysis.type,
         priority: aiAnalysis.priority,
         justification: aiAnalysis.justification,
-        recommendation: aiAnalysis.recommendation
+        recommendation: aiAnalysis.recommendation,
       },
-      anomalyLevel: anomalyLevel === 2 ? 'CRÍTICA' : anomalyLevel === 1 ? 'POTENCIAL' : 'NORMAL'
+      anomalyLevel:
+        anomalyLevel === 2
+          ? "CRÍTICA"
+          : anomalyLevel === 1
+          ? "POTENCIAL"
+          : "NORMAL",
     });
 
-    console.log('✅ Análisis completado');
+    console.log("✅ Análisis completado");
   } catch (error) {
-    console.error('❌ Error en análisis:', error);
-    analysisCounter.inc({ status: 'error' });
+    console.error("❌ Error en análisis:", error);
+    analysisCounter.inc({ status: "error" });
     res.status(500).json({
       timestamp: new Date().toISOString(),
-      status: 'error',
-      error: 'Error en el análisis AIOps',
-      message: error instanceof Error ? error.message : 'Error desconocido'
+      status: "error",
+      error: "Error en el análisis AIOps",
+      message: error instanceof Error ? error.message : "Error desconocido",
     });
   }
 });
@@ -259,32 +314,32 @@ app.get('/aiops/check-business', async (req: Request, res: Response) => {
 // ========================================
 // ENDPOINT: MÉTRICAS PROMETHEUS
 // ========================================
-app.get('/metrics', async (req: Request, res: Response) => {
-  res.set('Content-Type', register.contentType);
+app.get("/metrics", async (req: Request, res: Response) => {
+  res.set("Content-Type", register.contentType);
   res.end(await register.metrics());
 });
 
 // ========================================
 // ENDPOINT: HEALTH CHECK
 // ========================================
-app.get('/health', async (req: Request, res: Response) => {
+app.get("/health", async (req: Request, res: Response) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
     res.json({
-      status: 'healthy',
+      status: "healthy",
       timestamp: new Date().toISOString(),
       services: {
-        database: 'connected',
+        database: "connected",
         prometheus: PROMETHEUS_URL,
-        gemini: GEMINI_API_KEY ? 'configured' : 'not configured'
+        gemini: GEMINI_API_KEY ? "configured" : "not configured",
       },
-      uptime: process.uptime()
+      uptime: process.uptime(),
     });
   } catch (error) {
     res.status(503).json({
-      status: 'unhealthy',
+      status: "unhealthy",
       timestamp: new Date().toISOString(),
-      error: 'Database connection failed'
+      error: "Database connection failed",
     });
   }
 });
@@ -292,18 +347,19 @@ app.get('/health', async (req: Request, res: Response) => {
 // ========================================
 // INICIAR SERVIDOR
 // ========================================
-app.listen(PORT, () => {
-  console.log('='.repeat(60));
-  console.log('🤖 MCP-AIOps para Taller Mecánico');
-  console.log('='.repeat(60));
+app.listen(PORT, "0.0.0.0", () => {
+  // ⭐ AGREGAR '0.0.0.0' PARA RENDER
+  console.log("=".repeat(60));
+  console.log("🤖 MCP-AIOps para Taller Mecánico");
+  console.log("=".repeat(60));
   console.log(`✅ Servidor iniciado en puerto ${PORT}`);
   console.log(`📊 Métricas: http://localhost:${PORT}/metrics`);
   console.log(`🏥 Health: http://localhost:${PORT}/health`);
   console.log(`🔍 Análisis: http://localhost:${PORT}/aiops/check-business`);
-  console.log('='.repeat(60));
-  
+  console.log("=".repeat(60));
+
   if (!GEMINI_API_KEY) {
-    console.warn('⚠️  ADVERTENCIA: GEMINI_API_KEY no configurada');
-    console.warn('   El análisis con IA estará deshabilitado');
+    console.warn("⚠️  ADVERTENCIA: GEMINI_API_KEY no configurada");
+    console.warn("   El análisis con IA estará deshabilitado");
   }
 });
